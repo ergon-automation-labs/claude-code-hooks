@@ -81,6 +81,16 @@ fi
 # Run focused tests for this feature tag
 cd "$bot_root"
 
+# Compilation guard: check if the project compiles before running tests
+compile_output=$(MIX_ENV=test /Users/abby/.local/share/mise/shims/mix compile 2>&1)
+compile_exit=$?
+if [ $compile_exit -ne 0 ]; then
+  bot_name=$(basename "$bot_root")
+  echo "Compilation failed in ${bot_name} — skipping tests:"
+  echo "$compile_output" | tail -10
+  exit 0
+fi
+
 # Try tag-based first
 output=$(MIX_ENV=test /Users/abby/.local/share/mise/shims/mix test --only "$feature" --trace 2>&1)
 exit_code=$?

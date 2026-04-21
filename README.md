@@ -8,7 +8,19 @@ Hooks for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that aut
 
 Automatically runs focused tests matching the edited source file. Detects the feature area from the file path (handlers, stores, nats, etc.) and runs `mix test --only <tag> --trace` for that area. Falls back to path-based test file discovery if tags don't exist yet.
 
+Includes a **compilation guard** — runs `mix compile` first and skips tests if compilation fails, showing the error instead.
+
 Requires: Elixir/OTP project with `@moduletag`-based test tagging, `mix` on PATH (or mise shims).
+
+### related_files.sh (PostToolUse: Edit|Write)
+
+Suggests related files when editing Elixir source code. Outputs a system message with:
+- The corresponding test file for the source file being edited
+- For handler files: the NATS consumer file
+- For consumer files: the count of handler files
+- For store files: the behaviour file
+
+Requires: jq, Elixir project structure with `lib/` and `test/` directories.
 
 ### post_tool_use.sh (PostToolUse: Edit|Write)
 
@@ -34,6 +46,7 @@ ln -s $(pwd)/focused_test.sh ~/.claude/hooks/focused_test.sh
 ln -s $(pwd)/post_tool_use.sh ~/.claude/hooks/post_tool_use.sh
 ln -s $(pwd)/pre_tool_use.sh ~/.claude/hooks/pre_tool_use.sh
 ln -s $(pwd)/version_bump_check.sh ~/.claude/hooks/version_bump_check.sh
+ln -s $(pwd)/related_files.sh ~/.claude/hooks/related_files.sh
 ```
 
 Then register hooks in `~/.claude/settings.json` or your project's `.claude/settings.json`.
