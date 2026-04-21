@@ -40,6 +40,12 @@ if [ ! -f "$project_dir/mix.exs" ]; then
   exit 0
 fi
 
+# Check if mix.exs version was already bumped in this session
+if git diff "$project_dir/mix.exs" 2>/dev/null | grep -q '@version'; then
+  # Version already changed — suppress reminder
+  exit 0
+fi
+
 # Set a note that appears in the status bar for 60 seconds
 echo "bump mix.exs version" > /tmp/.claude_note
 

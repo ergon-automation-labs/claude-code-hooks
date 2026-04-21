@@ -11,6 +11,12 @@ if [ "$tool_name" != "Bash" ]; then
   exit 0
 fi
 
+# Check for NATS prod port in dev context
+if echo "$command" | grep -q "nats://localhost:4222"; then
+  echo "BLOCKED: Prod NATS port (4222) detected. Use 4223 for dev." >&2
+  exit 2
+fi
+
 # Check for destructive git commands
 destructive_patterns=(
   "git push --force"
