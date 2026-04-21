@@ -69,7 +69,6 @@ fi
 
 # For consumer files, suggest all handlers
 if [[ "$basename" == "consumer.ex" ]]; then
-  handler_dir=$(dirname "$file_path)/../handlers"
   handler_dir=$(dirname "$file_path")
   handler_dir="${handler_dir%/nats}/handlers"
   if [ -d "$handler_dir" ]; then
