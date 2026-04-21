@@ -19,6 +19,12 @@ if echo "$command" | grep -q "nats://localhost:4222"; then
   fi
 fi
 
+# Block writes to Salt-provisioned system directories — bots must not create these
+if echo "$command" | grep -qE "(mkdir|touch|tee|cp|mv|install)[^|]*(/var/log|/etc|/opt)/"; then
+  echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by bots." >&2
+  exit 2
+fi
+
 # Check for destructive git commands
 destructive_patterns=(
   "git push --force"

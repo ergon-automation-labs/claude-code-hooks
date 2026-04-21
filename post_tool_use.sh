@@ -1,71 +1,98 @@
 #!/bin/bash
-# PostToolUse hook: Auto-format Elixir files after edits
+# PostToolUse hook: Format Elixir files and emit architecture warnings
 # Receives JSON via stdin: { "tool_name": "Edit"|"Write", "tool_input": { "file_path": "..." } }
 
 input=$(cat)
 tool_name=$(echo "$input" | jq -r '.tool_name // empty')
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
 
-# Only format after Edit or Write operations
 if [ "$tool_name" != "Edit" ] && [ "$tool_name" != "Write" ]; then
     exit 0
 fi
 
-# Only format Elixir files
+warnings=()
+
+# ── Elixir file checks ──────────────────────────────────────────────────────
 if [[ "$file_path" == *.ex ]] || [[ "$file_path" == *.exs ]]; then
-    # Find the mix.exs directory for proper format context
+    is_test=false
+    [[ "$file_path" == */test/* ]] && is_test=true
+
+    # Auto-format
     mix_dir=$(dirname "$file_path")
     while [ "$mix_dir" != "/" ]; do
         if [ -f "$mix_dir/mix.exs" ]; then
-            # Run mix format relative to the project root
             cd "$mix_dir" && /Users/abby/.local/share/mise/shims/mix format "$file_path" 2>/dev/null
             break
         fi
         mix_dir=$(dirname "$mix_dir")
     done
-fi
 
-# Migration reminder for schema edits
-if [[ "$file_path" == *_schema.ex ]] || [[ "$file_path" =~ /schemas/ ]]; then
-    printf '{"systemMessage": "Schema edited — check if a migration is needed", "continue": true}'
-    exit 0
-fi
-
-# Consumer/handler sync check
-if [[ "$(basename "$file_path")" == "consumer.ex" ]]; then
-    bot_root=$(dirname "$file_path")
-    while [ "$bot_root" != "/" ]; do
-        if [ -f "$bot_root/mix.exs" ]; then
-            break
+    if [ "$is_test" = false ]; then
+        # Application.get_env in non-test code breaks release config pattern
+        if grep -q "Application\.get_env" "$file_path" 2>/dev/null; then
+            warnings+=("Application.get_env detected — use compile-time @env Mix.env() instead")
         fi
-        bot_root=$(dirname "$bot_root")
-    done
 
-    if [ -d "$bot_root/lib" ]; then
-        handler_dir=$(find "$bot_root/lib" -type d -name "handlers" 2>/dev/null | head -1)
-        if [ -n "$handler_dir" ] && [ -d "$handler_dir" ]; then
-            handler_files=$(find "$handler_dir" -name "*_handler.ex" -exec basename {} .ex \; 2>/dev/null | sort)
-            if [ -n "$handler_files" ]; then
-                unregistered=""
-                while IFS= read -r handler_name; do
-                    # Convert foo_handler to FooHandler
-                    module_name=$(echo "$handler_name" | sed 's/_handler$//' | sed 's/_//g' | sed -E 's/^([a-z])/\U\1/; s/_([a-z])/\U\1/g')FooHandler
-                    if ! grep -q "$handler_name" "$file_path" 2>/dev/null; then
-                        if [ -z "$unregistered" ]; then
-                            unregistered="$handler_name"
-                        else
-                            unregistered="$unregistered, $handler_name"
+        # Bare Mix.env() at runtime is unavailable in releases
+        if grep -qE "Mix\.env\(\)" "$file_path" 2>/dev/null; then
+            if ! grep -qE "@env\s+Mix\.env\(\)" "$file_path" 2>/dev/null; then
+                warnings+=("Bare Mix.env() detected — assign to @env at compile time: @env Mix.env()")
+            fi
+        fi
+
+        # NATS connection in bot supervisors/application — bot_army_runtime owns this
+        basename_file=$(basename "$file_path")
+        if [[ "$basename_file" == "application.ex" ]] || [[ "$basename_file" == *_supervisor.ex ]]; then
+            if grep -qE "(Gnat\.start_link|:nats\.connect|Nats\.connect)" "$file_path" 2>/dev/null; then
+                warnings+=("NATS connection in $(basename "$file_path") — bot_army_runtime owns the NATS connection, don't duplicate it in bot supervisors")
+            fi
+        fi
+    fi
+
+    # Schema migration reminder
+    if [[ "$file_path" == *_schema.ex ]] || [[ "$file_path" =~ /schemas/ ]]; then
+        warnings+=("Schema edited — check if a migration is needed")
+    fi
+
+    # Consumer/handler sync check
+    if [[ "$basename_file" == "consumer.ex" ]] || [[ "$(basename "$file_path")" == "consumer.ex" ]]; then
+        bot_root=$(dirname "$file_path")
+        while [ "$bot_root" != "/" ]; do
+            [ -f "$bot_root/mix.exs" ] && break
+            bot_root=$(dirname "$bot_root")
+        done
+
+        if [ -d "$bot_root/lib" ]; then
+            handler_dir=$(find "$bot_root/lib" -type d -name "handlers" 2>/dev/null | head -1)
+            if [ -n "$handler_dir" ] && [ -d "$handler_dir" ]; then
+                handler_files=$(find "$handler_dir" -name "*_handler.ex" -exec basename {} .ex \; 2>/dev/null | sort)
+                if [ -n "$handler_files" ]; then
+                    unregistered=""
+                    while IFS= read -r handler_name; do
+                        if ! grep -q "$handler_name" "$file_path" 2>/dev/null; then
+                            unregistered="${unregistered:+$unregistered, }$handler_name"
                         fi
-                    fi
-                done <<< "$handler_files"
-
-                if [ -n "$unregistered" ]; then
-                    printf '{"systemMessage": "Consumer/handler mismatch — unregistered handlers: %s", "continue": true}' "$unregistered"
+                    done <<< "$handler_files"
+                    [ -n "$unregistered" ] && warnings+=("Unregistered handlers in consumer: $unregistered")
                 fi
             fi
         fi
     fi
-    exit 0
+fi
+
+# ── Go TUI file checks ───────────────────────────────────────────────────────
+if [[ "$file_path" == *.go ]]; then
+    if grep -qE '"nats://localhost:[0-9]+"' "$file_path" 2>/dev/null || \
+       grep -qE "localhost:[42][24][234]" "$file_path" 2>/dev/null; then
+        warnings+=("NATS localhost in Go TUI — use host.docker.internal instead (TUIs run inside Docker)")
+    fi
+fi
+
+# ── Emit combined system message ─────────────────────────────────────────────
+if [ ${#warnings[@]} -gt 0 ]; then
+    msg=$(printf '%s | ' "${warnings[@]}")
+    msg="${msg% | }"
+    printf '{"systemMessage": "%s", "continue": true}' "$msg"
 fi
 
 exit 0
