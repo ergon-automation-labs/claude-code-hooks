@@ -88,6 +88,18 @@ if [[ "$file_path" == *.go ]]; then
     fi
 fi
 
+# ── Verification block reminder for lib/ edits ────────────────────────────────
+if [ "$is_test" = false ] && [[ "$file_path" == */lib/* ]]; then
+    mix_dir=$(dirname "$file_path")
+    while [ "$mix_dir" != "/" ]; do
+        if [ -f "$mix_dir/mix.exs" ]; then
+            warnings+=("If this change closes a GTD task, ensure the task has a Verification block and run 'make mark-task-test-pass'")
+            break
+        fi
+        mix_dir=$(dirname "$mix_dir")
+    done
+fi
+
 # ── Emit combined system message ─────────────────────────────────────────────
 if [ ${#warnings[@]} -gt 0 ]; then
     msg=$(printf '%s | ' "${warnings[@]}")

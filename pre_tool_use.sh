@@ -13,10 +13,23 @@ fi
 
 # Check for NATS prod port in dev context — allow GTD commands, Claude triggers, and diagnostic tools
 if echo "$command" | grep -q "nats://localhost:4222"; then
-  # Allow: GTD task tracking, Claude triggers, diagnostic commands, monitoring, and subscription
-  if ! echo "$command" | grep -qE "(gtd\.|gtd_bot|bot_army\.claude\.|nats (stream|consumer|server|top|subscribe|pub|req|kv|account|sub|add|rm|create|pub|sub|consumer|ls|info|view|jsz)|nats --server)"; then
+  # Allow: bridge.* subjects (project/task/goal management), GTD task tracking, Claude triggers, diagnostic commands, nats-helper
+  if ! echo "$command" | grep -qE "(bridge\.|gtd\.|gtd_bot|bot_army\.claude\.|nats-helper|nats (stream|consumer|server|top|subscribe|pub|req|kv|account|sub|add|rm|create|pub|sub|consumer|ls|info|view|jsz)|nats --server)"; then
     echo "BLOCKED: Prod NATS port (4222) detected. Use 4223 for dev." >&2
     exit 2
+  fi
+fi
+
+# Warn on stale graphify cache before test commands
+if echo "$command" | grep -qE "^(mix test|make test)"; then
+  cache_file="/Users/abby/code/elixir_bots/.graphify-cache/graph.json"
+  if [ -f "$cache_file" ]; then
+    cache_age=$(( $(date +%s) - $(stat -f %m "$cache_file" 2>/dev/null || stat -c %Y "$cache_file" 2>/dev/null || echo 0) ))
+    if [ "$cache_age" -gt 86400 ]; then
+      echo "WARN: Graphify cache is stale (>24h). Run 'make graphify-refresh' before testing." >&2
+    fi
+  else
+    echo "WARN: Graphify cache missing. Run 'make graphify-refresh' before testing." >&2
   fi
 fi
 
