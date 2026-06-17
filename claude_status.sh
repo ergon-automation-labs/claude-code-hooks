@@ -203,13 +203,28 @@ case $display in
     ;;
   5)
     # Display 5: North Star — Builder, Not Founder
-    # Rotates between two variants every other cycle
+    # Rotates through 6 variants every 6 seconds (full loop every 36s)
     north_cycle=$(( $(date +%s 2>/dev/null || echo 0) / 6 ))
-    if [ $((north_cycle % 2)) -eq 0 ]; then
-      rotating=$(printf '%b' "${RED}⛔ BUILD = DRIFT${RST} ${DIM}|${RST} ${YELLOW}🎯 INVOICE FIRST${RST}")
-    else
-      rotating=$(printf '%b' "${MAGENTA}💰 Builder > CEO${RST} ${DIM}|${RST} ${CYAN}Bill, don't SKU${RST}")
-    fi
+    case $((north_cycle % 6)) in
+      0)
+        rotating=$(printf '%b' "${RED}⛔ BUILD = DRIFT${RST} ${DIM}|${RST} ${YELLOW}🎯 INVOICE FIRST${RST}")
+        ;;
+      1)
+        rotating=$(printf '%b' "${MAGENTA}💰 Builder > CEO${RST} ${DIM}|${RST} ${CYAN}Bill, don't SKU${RST}")
+        ;;
+      2)
+        rotating=$(printf '%b' "${GRAY}📄${RST} ${CYAN}north_star_builder_not_ceo${RST}")
+        ;;
+      3)
+        rotating=$(printf '%b' "${YELLOW}❓${RST} ${BOLD_CYAN}Someone paid this week?${RST}")
+        ;;
+      4)
+        rotating=$(printf '%b' "${RED}🚫 No 48th bot.${RST}")
+        ;;
+      5)
+        rotating=$(printf '%b' "${GREEN}📨${RST} ${YELLOW}Send 5 DMs today${RST}")
+        ;;
+    esac
     ;;
 esac
 
