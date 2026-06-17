@@ -202,29 +202,54 @@ case $display in
     fi
     ;;
   5)
-    # Display 5: North Star — Builder, Not Founder
-    # Rotates through 6 variants every 6 seconds (full loop every 36s)
-    north_cycle=$(( $(date +%s 2>/dev/null || echo 0) / 6 ))
-    case $((north_cycle % 6)) in
-      0)
-        rotating=$(printf '%b' "${RED}⛔ BUILD = DRIFT${RST} ${DIM}|${RST} ${YELLOW}🎯 INVOICE FIRST${RST}")
-        ;;
-      1)
-        rotating=$(printf '%b' "${MAGENTA}💰 Builder > CEO${RST} ${DIM}|${RST} ${CYAN}Bill, don't SKU${RST}")
-        ;;
-      2)
-        rotating=$(printf '%b' "${GRAY}📄${RST} ${CYAN}north_star_builder_not_ceo${RST}")
-        ;;
-      3)
-        rotating=$(printf '%b' "${YELLOW}❓${RST} ${BOLD_CYAN}Someone paid this week?${RST}")
-        ;;
-      4)
-        rotating=$(printf '%b' "${RED}🚫 No 48th bot.${RST}")
-        ;;
-      5)
-        rotating=$(printf '%b' "${GREEN}📨${RST} ${YELLOW}Send 5 DMs today${RST}")
-        ;;
-    esac
+    # Display 5: Smart Reminders — highest-priority alert wins
+    # Checks critical infra → fleet health → workflow guards → rate limits
+    reminder=""
+
+    # 1. Critical infrastructure alerts (always win)
+    if [ "$nats_status" = "${RED}⚫${RST}" ]; then
+      reminder=$(printf '%b' "${RED}🔴 NATS down — make nats-status or launchctl load${RST}")
+    elif [ "$db_status" = "${RED}⚫${RST}" ]; then
+      reminder=$(printf '%b' "${YELLOW}🛢  DB down — make doctor or kubectl port-forward${RST}")
+    fi
+
+    # 2. Fleet health (thin registry)
+    if [ -z "$reminder" ]; then
+      reg_quick=$(nats request --server nats://localhost:4222 --timeout 1s bot_army.registry.bots.list '{}' 2>/dev/null | jq -r '.data.count // empty' 2>/dev/null)
+      if [ -n "$reg_quick" ] && [ "$reg_quick" -lt 25 ] 2>/dev/null; then
+        reminder=$(printf '%b' "${YELLOW}⚠️  $reg_quick bots (was ~46) — make health-check-dev${RST}")
+      fi
+    fi
+
+    # 3. Workflow guards
+    if [ -z "$reminder" ]; then
+      if [ -z "$TASK_SHORT" ]; then
+        reminder=$(printf '%b' "${CYAN}🎯 No active task — checkout one via GTD or /task-complete${RST}")
+      fi
+    fi
+
+    # 4. Rate-limit warnings
+    if [ -z "$reminder" ]; then
+      if [ -n "$rate_5h" ]; then
+        rate_5h_int="${rate_5h%.*}"
+        if [ "$rate_5h_int" -gt 80 ] 2>/dev/null; then
+          reminder=$(printf '%b' "${RED}⛽ 5h rate ${rate_5h}% — consider slowing down${RST}")
+        fi
+      fi
+    fi
+
+    # 5. Default: actionable hygiene reminder (cycles through tips)
+    if [ -z "$reminder" ]; then
+      tip_cycle=$(( $(date +%s 2>/dev/null || echo 0) / 9 ))
+      case $((tip_cycle % 4)) in
+        0) reminder=$(printf '%b' "${MAGENTA}💰 Builder > CEO${RST} ${DIM}|${RST} ${CYAN}Bill, don't SKU${RST}") ;;
+        1) reminder=$(printf '%b' "${GREEN}📝${RST} ${CYAN}Bump mix.exs version before push${RST}") ;;
+        2) reminder=$(printf '%b' "${YELLOW}🚫${RST} ${CYAN}Never --no-verify — hooks run compile→test→release${RST}") ;;
+        3) reminder=$(printf '%b' "${MAGENTA}🔄${RST} ${CYAN}make task-refresh keeps descriptions current${RST}") ;;
+      esac
+    fi
+
+    rotating="$reminder"
     ;;
 esac
 
