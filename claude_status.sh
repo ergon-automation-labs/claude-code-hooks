@@ -65,7 +65,27 @@ fi
 remaining=$(echo "$input" 2>/dev/null | jq -r ".context_window.remaining_percentage // empty" 2>/dev/null || echo "")
 used=$(echo "$input" 2>/dev/null | jq -r ".context_window.used_percentage // empty" 2>/dev/null || echo "")
 total_in=$(echo "$input" 2>/dev/null | jq -r ".context_window.total_input_tokens // empty" 2>/dev/null || echo "")
-total_out=$(echo "$input" 2>/dev/null | jq -r ".context_window.total_output_tokens // empty" 2>/dev/null || echo "")
+
+# --- Accumulate output tokens (Claude Code resets per-turn, unlike cumulative input) ---
+OUTPUT_ACCUM="/tmp/.claude_output_acc.${CLAUDE_CODE_SESSION_ID}"
+OUTPUT_LAST="/tmp/.claude_output_last.${CLAUDE_CODE_SESSION_ID}"
+current_out_raw=$(echo "$input" 2>/dev/null | jq -r ".context_window.total_output_tokens // empty" 2>/dev/null || echo "")
+last_out=$(cat "$OUTPUT_LAST" 2>/dev/null || echo "0")
+acc_out=$(cat "$OUTPUT_ACCUM" 2>/dev/null || echo "0")
+
+if [ -n "$current_out_raw" ] && [ "$current_out_raw" -ge 0 ] 2>/dev/null; then
+  if [ "$current_out_raw" -ge "$last_out" ] 2>/dev/null; then
+    # Same turn growing, or native cumulative — delta is new output
+    acc_out=$((acc_out + current_out_raw - last_out))
+  else
+    # Reset detected (new turn or window slide) — add current turn total
+    acc_out=$((acc_out + current_out_raw))
+  fi
+  echo "$current_out_raw" > "$OUTPUT_LAST"
+  echo "$acc_out" > "$OUTPUT_ACCUM"
+fi
+total_out=$acc_out
+
 lines_added=$(echo "$input" 2>/dev/null | jq -r ".cost.total_lines_added // 0" 2>/dev/null || echo "0")
 lines_removed=$(echo "$input" 2>/dev/null | jq -r ".cost.total_lines_removed // 0" 2>/dev/null || echo "0")
 
