@@ -63,9 +63,9 @@ if (echo "PING" | nc -w 1 localhost 4222 >/dev/null 2>&1) || \
   nats_status="${GREEN}🟢${RST}"
 fi
 
-# --- Check PostgreSQL health ---
+# --- Check PostgreSQL health (fail fast if port-forward is down) ---
 db_status="${RED}⚫${RST}"
-if psql -h 127.0.0.1 -p 35432 -U postgres -d ergon_gtd -c "SELECT 1" >/dev/null 2>&1; then
+if PGCONNECT_TIMEOUT=2 psql -h 127.0.0.1 -p 35432 -U postgres -d ergon_gtd -c "SELECT 1" >/dev/null 2>&1; then
   db_status="${GREEN}🟢${RST}"
 fi
 
@@ -162,8 +162,8 @@ case $display in
     ;;
   2)
     # Display 2: Tasks + Projects (combined line)
-    task_count=$(nats request --server nats://localhost:4222 bridge.task.list '{"limit":1}' 2>/dev/null | jq '.data.total_count // 0' 2>/dev/null)
-    project_count=$(nats request --server nats://localhost:4222 bridge.project.list '{}' 2>/dev/null | jq '.data.projects | length' 2>/dev/null)
+    task_count=$(nats request --server nats://localhost:4222 --timeout 2s bridge.task.list '{"limit":1}' 2>/dev/null | jq '.data.total_count // 0' 2>/dev/null)
+    project_count=$(nats request --server nats://localhost:4222 --timeout 2s bridge.project.list '{}' 2>/dev/null | jq '.data.projects | length' 2>/dev/null)
 
     # Color code task count
     task_color="$GREEN"
@@ -180,8 +180,8 @@ case $display in
     ;;
   3)
     # Display 3: Bot Fleet Health (NEW)
-    reg_count=$(nats request --server nats://localhost:4222 bot_army.registry.bots.list '{}' 2>/dev/null | jq -r '.data.count // empty' 2>/dev/null)
-    subj_count=$(nats request --server nats://localhost:4222 bot_army.registry.subjects.list '{}' 2>/dev/null | jq -r '.data.subjects | length // empty' 2>/dev/null)
+    reg_count=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.bots.list '{}' 2>/dev/null | jq -r '.data.count // empty' 2>/dev/null)
+    subj_count=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.subjects.list '{}' 2>/dev/null | jq -r '.data.subjects | length // empty' 2>/dev/null)
 
     if [ -n "$reg_count" ]; then
       bot_color="$GREEN"
@@ -194,7 +194,7 @@ case $display in
     ;;
   4)
     # Display 4: Bot Army facts
-    fact_response=$(nats request --server nats://localhost:4222 bridge.system.fact '{}' 2>/dev/null | jq -r '.data.fact // empty' 2>/dev/null | cut -c1-60)
+    fact_response=$(nats request --server nats://localhost:4222 --timeout 2s bridge.system.fact '{}' 2>/dev/null | jq -r '.data.fact // empty' 2>/dev/null | cut -c1-60)
     if [ -n "$fact_response" ]; then
       rotating=$(printf '%b' "${MAGENTA}💡 ${fact_response}${RST}")
     else
