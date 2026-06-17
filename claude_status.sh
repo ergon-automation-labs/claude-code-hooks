@@ -63,9 +63,9 @@ if (echo "PING" | nc -w 1 localhost 4222 >/dev/null 2>&1) || \
   nats_status="${GREEN}🟢${RST}"
 fi
 
-# --- Check PostgreSQL health (K8s NodePort 30003, direct) ---
+# --- Check PostgreSQL health (K8s NodePort 30003, TCP only) ---
 db_status="${RED}⚫${RST}"
-if PGPASSWORD=postgres PGCONNECT_TIMEOUT=2 psql "postgresql://postgres@127.0.0.1:30003/ergon_gtd" -c "SELECT 1" >/dev/null 2>&1; then
+if nc -w 1 -z 127.0.0.1 30003 >/dev/null 2>&1; then
   db_status="${GREEN}🟢${RST}"
 fi
 
