@@ -11,10 +11,10 @@ if [ "$tool_name" != "Bash" ]; then
   exit 0
 fi
 
-# Check for NATS prod port in dev context — allow GTD commands, Claude triggers, and diagnostic tools
+# Check for NATS prod port in dev context — allow PARA writes, GTD commands, Claude triggers, and diagnostic tools
 if echo "$command" | grep -q "nats://localhost:4222"; then
-  # Allow: bridge.* subjects (project/task/goal management), GTD task tracking, Claude triggers, diagnostic commands, nats-helper
-  if ! echo "$command" | grep -qE "(bridge\.|gtd\.|gtd_bot|bot_army\.claude\.|nats-helper|nats (stream|consumer|server|top|subscribe|pub|req|kv|account|sub|add|rm|create|pub|sub|consumer|ls|info|view|jsz)|nats --server)"; then
+  # Allow: para.* (PARA filesystem writes), bridge.* (project/task/goal management), GTD operations, Claude triggers, diagnostic commands
+  if ! echo "$command" | grep -qE "(para\.|bridge\.|gtd\.|gtd_bot|bot_army\.claude\.|nats-helper|nats (stream|consumer|server|top|subscribe|pub|req|kv|account|sub|add|rm|create|pub|sub|consumer|ls|info|view|jsz)|nats --server)"; then
     echo "BLOCKED: Prod NATS port (4222) detected. Use 4223 for dev." >&2
     exit 2
   fi
