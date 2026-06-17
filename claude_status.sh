@@ -164,7 +164,7 @@ prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} ${DIM}|${RST} ${model_
 
 # --- ROTATING DISPLAYS (with task title featured) ---
 cycle_time=$(( $(date +%s 2>/dev/null || echo 0) / 3 ))
-display=$(( cycle_time % 6 ))
+display=$(( cycle_time % 7 ))
 
 case $display in
   0)
@@ -212,11 +212,19 @@ case $display in
     rotating=$(printf '%b' "${task_color}📋 ${task_count} tasks${RST} ${DIM}|${RST} ${BOLD_CYAN}◆ ${project_count} projects${RST}")
     ;;
   3)
-    # Display 3: Bot Fleet + Surface Health
-    reg_count=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.bots.list '{}' 2>/dev/null | jq -r '.data.count // empty' 2>/dev/null)
-    subj_count=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.subjects.list '{}' 2>/dev/null | jq -r '.data.subjects | length // empty' 2>/dev/null)
+    # Display 3: Bot Fleet by Category + Surfaces
+    reg_json=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.bots.list '{}' 2>/dev/null)
+    reg_count=$(echo "$reg_json" | jq -r '.data.count // empty' 2>/dev/null)
 
-    # Count surfaces from filesystem (symlink → /Users/abby/code/surfaces)
+    # Count bots by category from registry
+    bot_cats=$(echo "$reg_json" | jq -r '[.data.bots[]?.category // "bot"] | group_by(.) | map({(.[0]): length}) | add // {}' 2>/dev/null)
+    bot_bot=$(echo "$bot_cats" | jq -r '.bot // 0' 2>/dev/null)
+    bot_svc=$(echo "$bot_cats" | jq -r '.service // 0' 2>/dev/null)
+    bot_inf=$(echo "$bot_cats" | jq -r '.infra // 0' 2>/dev/null)
+    bot_brd=$(echo "$bot_cats" | jq -r '.bridge // 0' 2>/dev/null)
+    bot_utl=$(echo "$bot_cats" | jq -r '.utility // 0' 2>/dev/null)
+
+    # Count surfaces from filesystem
     surface_dirs=$(find /Users/abby/code/surfaces -mindepth 2 -maxdepth 2 -type d ! -path "*/\.*" ! -path "*/graphify-out" 2>/dev/null | wc -l | tr -d ' ')
     surface_total="${surface_dirs:-0}"
 
@@ -224,9 +232,9 @@ case $display in
       bot_color="$GREEN"
       if [ "$reg_count" -lt 30 ] 2>/dev/null; then bot_color="$YELLOW"; fi
       if [ "$reg_count" -lt 20 ] 2>/dev/null; then bot_color="$RED"; fi
-      rotating=$(printf '%b' "🤖 ${bot_color}${reg_count} bots${RST} ${DIM}|${RST} 📡 ${subj_count:-?} subjects ${DIM}|${RST} 🖥️ ${CYAN}${surface_total}${RST} surfaces")
+      rotating=$(printf '%b' "🤖 ${bot_color}${reg_count}${RST}=${bot_bot}b/${bot_svc}s/${bot_inf}i/${bot_brd}B/${bot_utl}u ${DIM}|${RST} 🖥️ ${CYAN}${surface_total}${RST}srfs")
     else
-      rotating=$(printf '%b' "${GRAY}🤖 registry offline${RST} ${DIM}|${RST} 🖥️ ${CYAN}${surface_total}${RST} surfaces")
+      rotating=$(printf '%b' "${GRAY}🤖 registry offline${RST} ${DIM}|${RST} 🖥️ ${CYAN}${surface_total}${RST}srfs")
     fi
     ;;
   4)
@@ -292,6 +300,47 @@ case $display in
     fi
 
     rotating="$reminder"
+    ;;
+  6)
+    # Display 6: Server Stats (Air node health)
+    # macOS-compatible stats
+    cpu_idle=$(top -l 1 -n 0 | grep "CPU usage" | awk '{print $7}' | sed 's/%//' 2>/dev/null)
+    cpu_used=""
+    if [ -n "$cpu_idle" ]; then
+      cpu_int=$(printf "%.0f" "$cpu_idle" 2>/dev/null)
+      cpu_used=$((100 - cpu_int))
+    fi
+
+    mem_stats=$(vm_stat 2>/dev/null)
+    mem_free_pages=$(echo "$mem_stats" | grep "free" | awk '{print $3}' | sed 's/\.//' 2>/dev/null)
+    mem_active_pages=$(echo "$mem_stats" | grep "active" | awk '{print $3}' | sed 's/\.//' 2>/dev/null)
+    mem_inactive_pages=$(echo "$mem_stats" | grep "inactive" | awk '{print $3}' | sed 's/\.//' 2>/dev/null)
+    mem_wired_pages=$(echo "$mem_stats" | grep "wired down" | awk '{print $4}' | sed 's/\.//' 2>/dev/null)
+
+    mem_used_pct=""
+    if [ -n "$mem_free_pages" ] && [ -n "$mem_active_pages" ] && [ -n "$mem_inactive_pages" ] && [ -n "$mem_wired_pages" ]; then
+      total_used=$((mem_active_pages + mem_inactive_pages + mem_wired_pages))
+      total_all=$((total_used + mem_free_pages))
+      if [ "$total_all" -gt 0 ]; then
+        mem_used_pct=$((total_used * 100 / total_all))
+      fi
+    fi
+
+    load_avg=$(uptime | awk -F'load averages:' '{print $2}' | awk '{print $1}' | sed 's/,//' 2>/dev/null)
+
+    # Color-code CPU
+    cpu_color="$GREEN"
+    if [ -n "$cpu_used" ]; then
+      if [ "$cpu_used" -gt 80 ]; then cpu_color="$RED"; elif [ "$cpu_used" -gt 50 ]; then cpu_color="$YELLOW"; fi
+    fi
+
+    # Color-code memory
+    mem_color="$GREEN"
+    if [ -n "$mem_used_pct" ]; then
+      if [ "$mem_used_pct" -gt 85 ]; then mem_color="$RED"; elif [ "$mem_used_pct" -gt 70 ]; then mem_color="$YELLOW"; fi
+    fi
+
+    rotating=$(printf '%b' "${cpu_color}🔥 CPU:${cpu_used:-?}%${RST} ${DIM}|${RST} ${mem_color}🧠 MEM:${mem_used_pct:-?}%${RST} ${DIM}|${RST} ${CYAN}⚖️  LD:${load_avg:-?}${RST}")
     ;;
 esac
 
