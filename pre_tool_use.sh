@@ -70,5 +70,12 @@ if echo "$command" | grep -q "^git push"; then
   #fi
 fi
 
+# --- Live status bar message injection (long-running commands only) ---
+LIVE_MSG_FILE="/tmp/.claude_live_msg.${CLAUDE_CODE_SESSION_ID}"
+if echo "$command" | grep -qE "^(mix test|make test|mix compile|make compile|make deploy|git push|git commit)"; then
+  short_cmd=$(echo "$command" | awk '{print $1" "$2}')
+  echo "⏳ ${short_cmd}..." > "$LIVE_MSG_FILE"
+fi
+
 exit 0
 

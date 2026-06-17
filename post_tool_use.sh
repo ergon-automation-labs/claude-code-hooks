@@ -107,4 +107,13 @@ if [ ${#warnings[@]} -gt 0 ]; then
     printf '{"systemMessage": "%s", "continue": true}' "$msg"
 fi
 
+# ── Live status bar message injection (completion / warnings) ──────────────────
+LIVE_MSG_FILE="/tmp/.claude_live_msg.${CLAUDE_CODE_SESSION_ID}"
+if [ ${#warnings[@]} -gt 0 ]; then
+    echo "⚠️  ${#warnings[@]} warning(s) — see systemMessage" > "$LIVE_MSG_FILE"
+elif [ "$tool_name" = "Edit" ] || [ "$tool_name" = "Write" ]; then
+    filename=$(basename "$file_path")
+    echo "✅ ${tool_name}: ${filename}" > "$LIVE_MSG_FILE"
+fi
+
 exit 0
