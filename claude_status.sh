@@ -131,7 +131,7 @@ prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} ${DIM}|${RST} ${model_
 
 # --- ROTATING DISPLAYS (with task title featured) ---
 cycle_time=$(( $(date +%s 2>/dev/null || echo 0) / 3 ))
-display=$(( cycle_time % 5 ))
+display=$(( cycle_time % 6 ))
 
 case $display in
   0)
@@ -143,7 +143,7 @@ case $display in
     fi
     ;;
   1)
-    # Display 1: Context Window
+    # Display 1: Context Window + Tokens (combined line)
     if [ -n "$remaining" ]; then
       remaining_int="${remaining%.*}"
       if [ "$remaining_int" -lt 20 ]; then
@@ -153,17 +153,15 @@ case $display in
       else
         ctx_color="$GREEN"
       fi
-      rotating=$(printf '%b' "${ctx_color}context${RST}: ${used}%% used, ${remaining}%% free")
+      ctx_part=$(printf '%b' "${ctx_color}context${RST}: ${used}%% used")
     else
-      rotating="context: loading"
+      ctx_part="context: loading"
     fi
+    tok_part=$(printf '%b' "${BOLD_CYAN}in:${total_in}${RST} ${MAGENTA}out:${total_out}${RST} ${GREEN}+${lines_added}${RST}/${RED}-${lines_removed}${RST}")
+    rotating=$(printf '%b' "${ctx_part} ${DIM}|${RST} ${tok_part}")
     ;;
   2)
-    # Display 2: Tokens & Cost
-    rotating=$(printf '%b' "tokens: ${BOLD_CYAN}in:${total_in}${RST} ${MAGENTA}out:${total_out}${RST}  lines:${GREEN}+${lines_added}${RST}/${RED}-${lines_removed}${RST}")
-    ;;
-  3)
-    # Display 3: Tasks + Projects
+    # Display 2: Tasks + Projects (combined line)
     task_count=$(nats request --server nats://localhost:4222 bridge.task.list '{"limit":1}' 2>/dev/null | jq '.data.total_count // 0' 2>/dev/null)
     project_count=$(nats request --server nats://localhost:4222 bridge.project.list '{}' 2>/dev/null | jq '.data.projects | length' 2>/dev/null)
 
@@ -180,6 +178,20 @@ case $display in
 
     rotating=$(printf '%b' "${task_color}📋 ${task_count} tasks${RST} ${DIM}|${RST} ${BOLD_CYAN}◆ ${project_count} projects${RST}")
     ;;
+  3)
+    # Display 3: Bot Fleet Health (NEW)
+    reg_count=$(nats request --server nats://localhost:4222 bot_army.registry.bots.list '{}' 2>/dev/null | jq -r '.data.count // empty' 2>/dev/null)
+    subj_count=$(nats request --server nats://localhost:4222 bot_army.registry.subjects.list '{}' 2>/dev/null | jq -r '.data.subjects | length // empty' 2>/dev/null)
+
+    if [ -n "$reg_count" ]; then
+      bot_color="$GREEN"
+      if [ "$reg_count" -lt 30 ] 2>/dev/null; then bot_color="$YELLOW"; fi
+      if [ "$reg_count" -lt 20 ] 2>/dev/null; then bot_color="$RED"; fi
+      rotating=$(printf '%b' "🤖 ${bot_color}${reg_count} bots${RST} ${DIM}|${RST} 📡 ${subj_count:-?} subjects")
+    else
+      rotating=$(printf '%b' "${GRAY}🤖 registry offline${RST}")
+    fi
+    ;;
   4)
     # Display 4: Bot Army facts
     fact_response=$(nats request --server nats://localhost:4222 bridge.system.fact '{}' 2>/dev/null | jq -r '.data.fact // empty' 2>/dev/null | cut -c1-60)
@@ -188,6 +200,10 @@ case $display in
     else
       rotating=$(printf '%b' "${MAGENTA}💡 facts...${RST}")
     fi
+    ;;
+  5)
+    # Display 5: Quick Glance / Uptime hint
+    rotating=$(printf '%b' "${CYAN}🚀 Bot Army${RST} ${DIM}|${RST} ${GREEN}Online${RST}")
     ;;
 esac
 
