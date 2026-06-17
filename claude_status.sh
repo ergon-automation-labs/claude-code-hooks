@@ -212,17 +212,21 @@ case $display in
     rotating=$(printf '%b' "${task_color}📋 ${task_count} tasks${RST} ${DIM}|${RST} ${BOLD_CYAN}◆ ${project_count} projects${RST}")
     ;;
   3)
-    # Display 3: Bot Fleet Health (NEW)
+    # Display 3: Bot Fleet + Surface Health
     reg_count=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.bots.list '{}' 2>/dev/null | jq -r '.data.count // empty' 2>/dev/null)
     subj_count=$(nats request --server nats://localhost:4222 --timeout 2s bot_army.registry.subjects.list '{}' 2>/dev/null | jq -r '.data.subjects | length // empty' 2>/dev/null)
+
+    # Count surfaces from filesystem (symlink → /Users/abby/code/surfaces)
+    surface_dirs=$(find /Users/abby/code/surfaces -mindepth 2 -maxdepth 2 -type d ! -path "*/\.*" ! -path "*/graphify-out" 2>/dev/null | wc -l | tr -d ' ')
+    surface_total="${surface_dirs:-0}"
 
     if [ -n "$reg_count" ]; then
       bot_color="$GREEN"
       if [ "$reg_count" -lt 30 ] 2>/dev/null; then bot_color="$YELLOW"; fi
       if [ "$reg_count" -lt 20 ] 2>/dev/null; then bot_color="$RED"; fi
-      rotating=$(printf '%b' "🤖 ${bot_color}${reg_count} bots${RST} ${DIM}|${RST} 📡 ${subj_count:-?} subjects")
+      rotating=$(printf '%b' "🤖 ${bot_color}${reg_count} bots${RST} ${DIM}|${RST} 📡 ${subj_count:-?} subjects ${DIM}|${RST} 🖥️ ${CYAN}${surface_total}${RST} surfaces")
     else
-      rotating=$(printf '%b' "${GRAY}🤖 registry offline${RST}")
+      rotating=$(printf '%b' "${GRAY}🤖 registry offline${RST} ${DIM}|${RST} 🖥️ ${CYAN}${surface_total}${RST} surfaces")
     fi
     ;;
   4)
