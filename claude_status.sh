@@ -17,6 +17,19 @@ fi
 TASK_SHORT="${TASK_ID:0:8}"
 TITLE_SHORT="${TASK_TITLE:0:40}"
 
+# --- Live Claude message channel ---
+LIVE_MSG_MAX_AGE_SECS=120
+LIVE_MSG_FILE="/tmp/.claude_live_msg.${CLAUDE_CODE_SESSION_ID}"
+LIVE_MSG=""
+if [ -f "$LIVE_MSG_FILE" ]; then
+  LIVE_MSG_TS=$(stat -f %m "$LIVE_MSG_FILE" 2>/dev/null || stat -c %Y "$LIVE_MSG_FILE" 2>/dev/null || echo 0)
+  NOW_TS=$(date +%s)
+  LIVE_MSG_AGE=$((NOW_TS - LIVE_MSG_TS))
+  if [ "$LIVE_MSG_AGE" -lt "$LIVE_MSG_MAX_AGE_SECS" ]; then
+    LIVE_MSG=$(cat "$LIVE_MSG_FILE" 2>/dev/null | tr '\n' ' ' | sed 's/^ *//;s/ *$//' | cut -c1-80)
+  fi
+fi
+
 # --- ANSI color codes ---
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
@@ -203,13 +216,18 @@ case $display in
     ;;
   5)
     # Display 5: Smart Reminders — highest-priority alert wins
-    # Checks critical infra → fleet health → workflow guards → rate limits
+    # Priority: Live message → critical infra → fleet health → workflow guards → rate limits → tips
     reminder=""
 
+    # 0. Live message from Claude processing (expires after $LIVE_MSG_MAX_AGE_SECS seconds)
+    if [ -n "$LIVE_MSG" ]; then
+      reminder=$(printf '%b' "${MAGENTA}💬${RST} ${BOLD_CYAN}${LIVE_MSG}${RST}")
+    fi
+
     # 1. Critical infrastructure alerts (always win)
-    if [ "$nats_status" = "${RED}⚫${RST}" ]; then
+    if [ -z "$reminder" ] && [ "$nats_status" = "${RED}⚫${RST}" ]; then
       reminder=$(printf '%b' "${RED}🔴 NATS down — make nats-status or launchctl load${RST}")
-    elif [ "$db_status" = "${RED}⚫${RST}" ]; then
+    elif [ -z "$reminder" ] && [ "$db_status" = "${RED}⚫${RST}" ]; then
       reminder=$(printf '%b' "${YELLOW}🛢  DB down — make doctor or kubectl port-forward${RST}")
     fi
 
