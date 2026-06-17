@@ -202,8 +202,14 @@ case $display in
     fi
     ;;
   5)
-    # Display 5: Quick Glance / Uptime hint
-    rotating=$(printf '%b' "${CYAN}🚀 Bot Army${RST} ${DIM}|${RST} ${GREEN}Online${RST}")
+    # Display 5: North Star — Builder, Not Founder
+    # Rotates between two variants every other cycle
+    north_cycle=$(( $(date +%s 2>/dev/null || echo 0) / 6 ))
+    if [ $((north_cycle % 2)) -eq 0 ]; then
+      rotating=$(printf '%b' "${RED}⛔ BUILD = DRIFT${RST} ${DIM}|${RST} ${YELLOW}🎯 INVOICE FIRST${RST}")
+    else
+      rotating=$(printf '%b' "${MAGENTA}💰 Builder > CEO${RST} ${DIM}|${RST} ${CYAN}Bill, don't SKU${RST}")
+    fi
     ;;
 esac
 
