@@ -1,52 +1,53 @@
 #!/bin/bash
-# PostToolUse hook: Remind to bump version in mix.exs when lib files change
-# Receives JSON via stdin: { "tool_name": "Edit"|"Write", "tool_input": { "file_path": "..." } }
+# PostToolUse hook: Warn if bot code changed but version didn't
+# Runs after mix.exs edits to detect version bumps
+# Input: JSON on stdin with tool_name and tool_input.file_path
 
 input=$(cat)
 tool_name=$(echo "$input" | jq -r '.tool_name // empty')
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
 
-# Only check after Edit or Write
-if [ "$tool_name" != "Edit" ] && [ "$tool_name" != "Write" ]; then
+# Only fire on Edit operations to mix.exs
+if [ "$tool_name" != "Edit" ]; then
   exit 0
 fi
 
-# Only check Elixir files
-if [[ "$file_path" != *.ex ]] && [[ "$file_path" != *.exs ]]; then
+if [[ "$file_path" != */mix.exs ]]; then
   exit 0
 fi
 
-# Skip mix.exs itself — editing it IS the bump
-if [[ "$(basename "$file_path")" == "mix.exs" ]]; then
+# Find the bot root (directory with mix.exs)
+bot_root=$(dirname "$file_path")
+
+# Extract bot name from directory
+bot_name=$(basename "$bot_root")
+
+# Get current version from mix.exs (staged or working copy)
+current_version=$(grep -E '^\s+version:' "$file_path" 2>/dev/null | sed 's/.*version: "\([^"]*\)".*/\1/' | head -1)
+
+if [ -z "$current_version" ]; then
   exit 0
 fi
 
-# Skip test files
-if [[ "$file_path" == */test/* ]]; then
+# Get previous version from git HEAD
+prev_version=$(git show HEAD:"$file_path" 2>/dev/null | grep -E '^\s+version:' | sed 's/.*version: "\([^"]*\)".*/\1/' | head -1)
+
+if [ -z "$prev_version" ]; then
+  # No previous version (first commit), don't warn
   exit 0
 fi
 
-# Find the project root (directory containing mix.exs)
-project_dir=$(dirname "$file_path")
-while [ "$project_dir" != "/" ]; do
-  if [ -f "$project_dir/mix.exs" ]; then
-    break
+# If versions match, no warning needed
+if [ "$current_version" = "$prev_version" ]; then
+  # Check if any bot code actually changed in the staging area
+  # Look for changes in lib/ excluding mix files
+  code_changes=$(git diff --cached --name-only "$bot_root" 2>/dev/null | grep -E '^bot_army_[^/]+/lib/' | wc -l)
+
+  if [ "$code_changes" -gt 0 ]; then
+    echo "⚠️  Version check: ${bot_name} code changed but version stayed at ${current_version}"
+    echo "   Did you mean to bump the version? (Current: $current_version)"
+    exit 0
   fi
-  project_dir=$(dirname "$project_dir")
-done
-
-# If no mix.exs found, not an Elixir project — skip
-if [ ! -f "$project_dir/mix.exs" ]; then
-  exit 0
 fi
-
-# Check if mix.exs version was already bumped in this session
-if git diff "$project_dir/mix.exs" 2>/dev/null | grep -q '@version'; then
-  # Version already changed — suppress reminder
-  exit 0
-fi
-
-# Set a note that appears in the status bar for 60 seconds
-echo "bump mix.exs version" > /tmp/.claude_note
 
 exit 0
