@@ -73,6 +73,17 @@ if [ "$tool_name" = "Edit" ] || [ "$tool_name" = "Write" ]; then
         recommendations+=("💡 Pre-push hook creates GitHub releases from version bumps")
     fi
 
+    # Hook sync reminder for bot repos (Option C: gradual rollout)
+    file_dir=$(dirname "$file_path")
+    repo_root="$file_dir"
+    while [ "$repo_root" != "/" ]; do
+        if [ -f "$repo_root/git-hooks/pre-push" ]; then
+            recommendations+=("💡 Hook sync? Run: \`make -C /Users/abby/code/elixir_bots sync-hook\` (gradual rollout)")
+            break
+        fi
+        repo_root=$(dirname "$repo_root")
+    done
+
     # application.ex recommendations
     if [[ "$basename_file" == "application.ex" ]]; then
         recommendations+=("🧪 Run full test suite: \`mix test\`")
