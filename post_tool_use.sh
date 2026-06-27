@@ -44,6 +44,61 @@ if [ "$tool_name" = "Bash" ] && [ "$exit_code" != "0" ]; then
     exit 0
 fi
 
+# ── Edit/Write tool recommendations ────────────────────────────────────────────
+if [ "$tool_name" = "Edit" ] || [ "$tool_name" = "Write" ]; then
+    recommendations=()
+    basename_file=$(basename "$file_path")
+
+    # Test file recommendations
+    if [[ "$file_path" == */test/* ]] && [[ "$file_path" == *.exs ]]; then
+        recommendations+=("📋 Add @moduletag to test module (required for focused test hook)")
+        recommendations+=("🧪 Run tests: \`cd \$(dirname $file_path) && mix test\`")
+    fi
+
+    # Handler file recommendations
+    if [[ "$file_path" == */handlers/*_handler.ex ]]; then
+        recommendations+=("📋 Add @moduletag :handlers to module")
+        recommendations+=("🧪 Run handler tests: \`make test-handlers\`")
+    fi
+
+    # Store file recommendations
+    if [[ "$file_path" == */stores/*_store.ex ]] || [[ "$file_path" == *_store.ex ]]; then
+        recommendations+=("📋 Add @moduletag :stores to module")
+        recommendations+=("🧪 Run store tests: \`make test-stores\`")
+    fi
+
+    # mix.exs recommendations
+    if [[ "$basename_file" == "mix.exs" ]]; then
+        recommendations+=("⚠️  Did you bump the version? (CLAUDE.md: always bump on changes)")
+        recommendations+=("💡 Pre-push hook creates GitHub releases from version bumps")
+    fi
+
+    # application.ex recommendations
+    if [[ "$basename_file" == "application.ex" ]]; then
+        recommendations+=("🧪 Run full test suite: \`mix test\`")
+        recommendations+=("💡 Application changes can affect boot sequence")
+    fi
+
+    # Generic .ex file recommendations
+    if [[ "$file_path" == *.ex ]] && [[ "$file_path" != */test/* ]]; then
+        if ! [[ "$file_path" == */handlers/* ]] && ! [[ "$file_path" == */stores/* ]]; then
+            recommendations+=("🧪 Run tests after editing: \`mix test\`")
+        fi
+    fi
+
+    # Workflow reminder
+    if [ ${#recommendations[@]} -gt 0 ]; then
+        recommendations+=("")
+        recommendations+=("📚 Workflow: edit → test → commit → push → publish → deploy")
+    fi
+
+    # Emit recommendations as system message
+    if [ ${#recommendations[@]} -gt 0 ]; then
+        msg=$(printf '%s\n' "${recommendations[@]}")
+        printf '{"systemMessage": "%s", "continue": true}' "$(echo "$msg" | jq -R -s -c .)"
+    fi
+fi
+
 # Handle Edit/Write tool ops (original logic below)
 warnings=()
 
