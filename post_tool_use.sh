@@ -1,15 +1,50 @@
 #!/bin/bash
-# PostToolUse hook: Format Elixir files and emit architecture warnings
-# Receives JSON via stdin: { "tool_name": "Edit"|"Write", "tool_input": { "file_path": "..." } }
+# PostToolUse hook: Architecture warnings + diagnostics suggestions
+# Receives JSON via stdin: { "tool_name": "Edit"|"Write"|"Bash", "tool_input": {...}, "exit_code": N, "stderr": "..." }
 
 input=$(cat)
 tool_name=$(echo "$input" | jq -r '.tool_name // empty')
 file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
+exit_code=$(echo "$input" | jq -r '.exit_code // 0')
+stderr=$(echo "$input" | jq -r '.stderr // empty')
+command=$(echo "$input" | jq -r '.tool_input.command // empty')
 
-if [ "$tool_name" != "Edit" ] && [ "$tool_name" != "Write" ]; then
+# ── Bash tool failure diagnostics ───────────────────────────────────────────────
+if [ "$tool_name" = "Bash" ] && [ "$exit_code" != "0" ]; then
+    diagnostics=()
+
+    # Detect deployment failures
+    if [[ "$command" == *"make deploy"* ]] || [[ "$command" == *"make publish"* ]]; then
+        diagnostics+=("💡 Deployment failed. Debug with: \`make bot-log-search BOT=<name> QUERY=error\`")
+        diagnostics+=("💡 Or check system: \`make diagnose\` (proposed)")
+    fi
+
+    # Detect test failures
+    if [[ "$command" == *"mix test"* ]] || [[ "$command" == *"make test"* ]]; then
+        diagnostics+=("💡 Tests failed. View logs: \`make tail-bot-log BOT=<name>\`")
+        diagnostics+=("💡 Search errors: \`make bot-log-search BOT=<name> QUERY=error\`")
+    fi
+
+    # Detect bot startup failures
+    if [[ "$stderr" == *"failed to boot"* ]] || [[ "$stderr" == *"erl_crash"* ]]; then
+        diagnostics+=("💡 Bot boot failed. Check: \`make diagnose\` (proposed)")
+        diagnostics+=("💡 See stderr: \`make tail-bot-err BOT=<name>\`")
+    fi
+
+    # Generic Make/Bash failure with fallback
+    if [ ${#diagnostics[@]} -eq 0 ] && [[ "$command" == *"make"* ]]; then
+        diagnostics+=("💡 Make target failed. Check logs: \`make bot-log-search QUERY=error\`")
+    fi
+
+    # Emit diagnostics as system message if we have any
+    if [ ${#diagnostics[@]} -gt 0 ]; then
+        msg=$(printf '%s\n' "${diagnostics[@]}")
+        printf '{"systemMessage": "%s", "continue": true}' "$(echo "$msg" | jq -R -s -c .)"
+    fi
     exit 0
 fi
 
+# Handle Edit/Write tool ops (original logic below)
 warnings=()
 
 # ── Elixir file checks ──────────────────────────────────────────────────────
