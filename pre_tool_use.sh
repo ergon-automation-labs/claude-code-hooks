@@ -1,12 +1,23 @@
 #!/bin/bash
-# PreToolUse hook: Blocks destructive git commands on main/master branches
-# Receives JSON via stdin: { "tool_name": "Bash", "tool_input": { "command": "..." } }
+# PreToolUse hook: Blocks destructive commands and writes to system directories
+# Receives JSON via stdin: { "tool_name": "Bash|Edit|Write", "tool_input": { "command": "..." | "file_path": "..." } }
 
 input=$(cat)
 tool_name=$(echo "$input" | jq -r '.tool_name // empty')
 command=$(echo "$input" | jq -r '.tool_input.command // empty')
+file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
 
-# Only check Bash commands
+# Block writes to system directories (Edit/Write tools)
+if [ "$tool_name" = "Edit" ] || [ "$tool_name" = "Write" ]; then
+  if [[ "$file_path" =~ ^(/var/log|/etc|/opt)/ ]]; then
+    echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by Claude." >&2
+    echo "File: $file_path" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
+# Only check Bash commands beyond this point
 if [ "$tool_name" != "Bash" ]; then
   exit 0
 fi
@@ -33,10 +44,16 @@ if echo "$command" | grep -qE "^(mix test|make test)"; then
   fi
 fi
 
-# Block writes to Salt-provisioned system directories — bots must not create these
-if echo "$command" | grep -qE "(mkdir|touch|tee|cp|mv|install)[^|]*(/var/log|/etc|/opt)/"; then
-  echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by bots." >&2
-  exit 2
+# Block WRITES to Salt-provisioned system directories — must use Salt states instead
+# Only block if command actually MODIFIES (>, >>, tee, cp, mv, mkdir, touch, chmod, etc)
+# Allow reads, mentions in git/echo, and diagnostic commands
+if echo "$command" | grep -qE "(/var/log|/etc|/opt)/"; then
+  # Check for actual write operations (redirects, copy, move, create, modify)
+  if echo "$command" | grep -qE "(>|>>|tee|sqlite3.*INSERT|cp.*(/var/log|/etc|/opt)|mv.*(/var/log|/etc|/opt)|mkdir|touch|chmod|sed -i|awk.*>|File\.write)"; then
+    echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by commands." >&2
+    echo "Use Salt states (state.apply) to manage system configuration." >&2
+    exit 2
+  fi
 fi
 
 # Check for destructive git commands
