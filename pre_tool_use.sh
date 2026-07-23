@@ -45,16 +45,26 @@ if echo "$command" | grep -qE "^(mix test|make test)"; then
 fi
 
 # Block WRITES to Salt-provisioned system directories — must use Salt states instead
-# Only block if command actually MODIFIES (>, >>, tee, cp, mv, mkdir, touch, chmod, etc)
-# Allow reads, mentions in git/echo, and diagnostic commands
-if echo "$command" | grep -qE "(/var/log|/etc|/opt)/"; then
-  # Check for actual write operations (redirects, copy, move, create, modify)
-  if echo "$command" | grep -qE "(>|>>|tee|sqlite3.*INSERT|cp.*(/var/log|/etc|/opt)|mv.*(/var/log|/etc|/opt)|mkdir|touch|chmod|sed -i|awk.*>|File\.write)"; then
-    echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by commands." >&2
-    echo "Use Salt states (state.apply) to manage system configuration." >&2
-    exit 2
-  fi
-fi
+# Only block explicit writes (>, >>, touch path, mkdir path, etc), not reads or mentions
+# Skip git, echo, and common read-only diagnostics
+case "$command" in
+  git*|echo*|nats*|grep*|cat*|head*|tail*|ls*|find*|stat*|ps*|curl*|wget*)
+    # Allowed: git commits, echo messages, diagnostic reads
+    ;;
+  *)
+    # Block actual write operations to system directories
+    if echo "$command" | grep -qE "^[^#]*(>|>>|tee) *(/var/log|/etc|/opt)/"; then
+      echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by commands." >&2
+      echo "Use Salt states (state.apply) to manage system configuration." >&2
+      exit 2
+    fi
+    if echo "$command" | grep -qE "(mkdir|touch|chmod|sed -i|cp|mv) .*(/var/log|/etc|/opt)/"; then
+      echo "BLOCKED: System directories (/var/log, /etc, /opt) are provisioned by Salt, not by commands." >&2
+      echo "Use Salt states (state.apply) to manage system configuration." >&2
+      exit 2
+    fi
+    ;;
+esac
 
 # Check for destructive git commands
 destructive_patterns=(
