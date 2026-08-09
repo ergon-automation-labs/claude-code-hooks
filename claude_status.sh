@@ -90,16 +90,32 @@ lines_added=$(echo "$input" 2>/dev/null | jq -r ".cost.total_lines_added // 0" 2
 lines_removed=$(echo "$input" 2>/dev/null | jq -r ".cost.total_lines_removed // 0" 2>/dev/null || echo "0")
 
 # --- Check NATS health ---
-nats_status="${RED}⚫${RST}"
+nats_status="🔴"
 if (echo "PING" | nc -w 1 localhost 4222 >/dev/null 2>&1) || \
    (nats request --server nats://localhost:4222 bridge.system.fact '{}' >/dev/null 2>&1); then
-  nats_status="${GREEN}🟢${RST}"
+  nats_status="🟢"
 fi
 
 # --- Check PostgreSQL health (K8s NodePort 30003, TCP only) ---
-db_status="${RED}⚫${RST}"
+db_status="🔴"
 if nc -w 1 -z 127.0.0.1 30003 >/dev/null 2>&1; then
-  db_status="${GREEN}🟢${RST}"
+  db_status="🟢"
+fi
+
+# --- Check mini NATS health (mini node, default port 4222) ---
+mini_nats_status="🔴"
+MINI_HOST="${MINI_HOST:-mini}"
+if (echo "PING" | nc -w 1 "$MINI_HOST" 4222 >/dev/null 2>&1) || \
+   (nats request --server "nats://${MINI_HOST}:4222" bridge.system.fact '{}' >/dev/null 2>&1); then
+  mini_nats_status="🟢"
+fi
+
+# --- Check mini PostgreSQL health (mini via Tailscale/network) ---
+mini_db_status="🔴"
+# Try multiple access methods: Tailscale IP, hostname, or fallback
+if nc -w 1 -z "${MINI_HOST}" 30003 >/dev/null 2>&1 || \
+   nc -w 1 -z 100.90.128.89 30003 >/dev/null 2>&1; then
+  mini_db_status="🟢"
 fi
 
 # --- Model color ---
@@ -160,7 +176,14 @@ if [ -n "$TASK_SHORT" ]; then
   fi
 fi
 
-prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} ${DIM}|${RST} ${model_display} ${CYAN}${current_time}${RST} ${DIM}|${RST} ${fixed_suffix}${task_indicator}")
+# Check for async task status
+async_indicator=""
+if [ -f /tmp/.claude_async_task ]; then
+  async_type=$(jq -r '.agent_type // "task"' /tmp/.claude_async_task 2>/dev/null || echo "task")
+  async_indicator=$(printf '%b' " ${DIM}|${RST} 🔄 ${MAGENTA}${async_type}${RST}")
+fi
+
+prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} mini-NATS:${mini_nats_status} mini-DB:${mini_db_status} ${DIM}|${RST} ${model_display} ${CYAN}${current_time}${RST} ${DIM}|${RST} ${fixed_suffix}${task_indicator}${async_indicator}")
 
 # --- ROTATING DISPLAYS (with task title featured) ---
 cycle_time=$(( $(date +%s 2>/dev/null || echo 0) / 3 ))
