@@ -91,31 +91,30 @@ lines_removed=$(echo "$input" 2>/dev/null | jq -r ".cost.total_lines_removed // 
 
 # --- Check NATS health ---
 nats_status="🔴"
-if (echo "PING" | nc -w 1 localhost 4222 >/dev/null 2>&1) || \
-   (nats request --server nats://localhost:4222 bridge.system.fact '{}' >/dev/null 2>&1); then
+if (echo "PING" | nc -G 1 -w 1 localhost 4222 >/dev/null 2>&1) || \
+   (nats request --server nats://localhost:4222 --timeout 1s bridge.system.fact '{}' >/dev/null 2>&1); then
   nats_status="🟢"
 fi
 
 # --- Check PostgreSQL health (K8s NodePort 30003, TCP only) ---
 db_status="🔴"
-if nc -w 1 -z 127.0.0.1 30003 >/dev/null 2>&1; then
+if nc -G 1 -w 1 -z 127.0.0.1 30003 >/dev/null 2>&1; then
   db_status="🟢"
 fi
 
 # --- Check mini NATS health (mini node, default port 4222) ---
 mini_nats_status="🔴"
 MINI_HOST="${MINI_HOST:-mini}"
-if (echo "PING" | nc -w 1 "$MINI_HOST" 4222 >/dev/null 2>&1) || \
-   (nats request --server "nats://${MINI_HOST}:4222" bridge.system.fact '{}' >/dev/null 2>&1); then
-  mini_nats_status="🟢"
-fi
-
-# --- Check mini PostgreSQL health (mini via Tailscale/network) ---
 mini_db_status="🔴"
-# Try multiple access methods: Tailscale IP, hostname, or fallback
-if nc -w 1 -z "${MINI_HOST}" 30003 >/dev/null 2>&1 || \
-   nc -w 1 -z 100.90.128.89 30003 >/dev/null 2>&1; then
-  mini_db_status="🟢"
+
+# One reachability probe gates both mini checks. When mini is down (it often is)
+# each fallback costs a full connect timeout, and this runs every few seconds.
+if nc -G 1 -w 1 -z "$MINI_HOST" 4222 >/dev/null 2>&1; then
+  mini_nats_status="🟢"
+  nc -G 1 -w 1 -z "$MINI_HOST" 30003 >/dev/null 2>&1 && mini_db_status="🟢"
+elif nc -G 1 -w 1 -z 100.90.128.89 4222 >/dev/null 2>&1; then
+  mini_nats_status="🟢"
+  nc -G 1 -w 1 -z 100.90.128.89 30003 >/dev/null 2>&1 && mini_db_status="🟢"
 fi
 
 # --- Model color ---
