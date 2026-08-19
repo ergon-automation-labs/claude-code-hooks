@@ -105,6 +105,9 @@ fi
 # --- Check mini NATS health (mini node, default port 4222) ---
 mini_nats_status="🔴"
 MINI_HOST="${MINI_HOST:-mini}"
+# abbys-mac-mini-2. The previous fallback here was 100.90.128.89, which is air's
+# OWN Tailscale IP, so both mini indicators showed green off air's localhost.
+MINI_TAILSCALE_IP="${MINI_TAILSCALE_IP:-100.72.132.2}"
 mini_db_status="🔴"
 
 # One reachability probe gates both mini checks. When mini is down (it often is)
@@ -112,9 +115,9 @@ mini_db_status="🔴"
 if nc -G 1 -w 1 -z "$MINI_HOST" 4222 >/dev/null 2>&1; then
   mini_nats_status="🟢"
   nc -G 1 -w 1 -z "$MINI_HOST" 30003 >/dev/null 2>&1 && mini_db_status="🟢"
-elif nc -G 1 -w 1 -z 100.90.128.89 4222 >/dev/null 2>&1; then
+elif nc -G 1 -w 1 -z "$MINI_TAILSCALE_IP" 4222 >/dev/null 2>&1; then
   mini_nats_status="🟢"
-  nc -G 1 -w 1 -z 100.90.128.89 30003 >/dev/null 2>&1 && mini_db_status="🟢"
+  nc -G 1 -w 1 -z "$MINI_TAILSCALE_IP" 30003 >/dev/null 2>&1 && mini_db_status="🟢"
 fi
 
 # --- Model color ---
