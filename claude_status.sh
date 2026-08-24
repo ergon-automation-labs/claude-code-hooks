@@ -96,10 +96,39 @@ if (echo "PING" | nc -G 1 -w 1 localhost 4222 >/dev/null 2>&1) || \
   nats_status="🟢"
 fi
 
-# --- Check PostgreSQL health (K8s NodePort 30003, TCP only) ---
+# --- Check PostgreSQL health (K8s NodePort 30003, real pg_isready probe) ---
 db_status="🔴"
+
+# --- Repo context (current directory + git branch) ---
+repo_name=$(pwd 2>/dev/null | xargs basename || echo "")
+git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+git_dirty=""
+if [ -n "$git_branch" ] && ! git diff-files --quiet --ignore-submodules 2>/dev/null; then
+  git_dirty="*"
+fi
+repo_context=""
+if [ -n "$git_branch" ] && [ -n "$repo_name" ]; then
+  repo_context=$(printf '%b' " ${CYAN}${repo_name}${RST}@${YELLOW}${git_branch}${git_dirty}${RST}")
+fi
+
+# --- Wrong-turn count from NATS (if session has them) ---
+wrong_turn_count=0
+WRONG_TURNS_CACHE="/tmp/.claude_wrong_turns.${CLAUDE_CODE_SESSION_ID}"
+if [ -f "$WRONG_TURNS_CACHE" ]; then
+  wt_cached=$(cat "$WRONG_TURNS_CACHE" 2>/dev/null || echo "0")
+  wrong_turn_count="${wt_cached%.*}"
+fi
+wrong_turn_indicator=""
+if [ "$wrong_turn_count" -gt 0 ] 2>/dev/null; then
+  wrong_turn_indicator=$(printf '%b' " ${DIM}|${RST} ${RED}⚠️ ${wrong_turn_count}WT${RST}")
+fi
+# TCP accept alone doesn't prove Postgres is behind the port (stale
+# port-forwards, unrelated services, etc. all accept too) — gate on a real
+# pg_isready protocol probe once the cheap TCP check passes.
 if nc -G 1 -w 1 -z 127.0.0.1 30003 >/dev/null 2>&1; then
-  db_status="🟢"
+  if pg_isready -h 127.0.0.1 -p 30003 -t 1 >/dev/null 2>&1; then
+    db_status="🟢"
+  fi
 fi
 
 # --- Check mini NATS health (mini node, default port 4222) ---
@@ -112,12 +141,19 @@ mini_db_status="🔴"
 
 # One reachability probe gates both mini checks. When mini is down (it often is)
 # each fallback costs a full connect timeout, and this runs every few seconds.
+# mini-DB additionally confirms with pg_isready — a bare TCP accept on 30003
+# doesn't prove Postgres is actually there (e.g. a stale port-forward left
+# listening after the backing pod/cluster is gone still accepts connections).
 if nc -G 1 -w 1 -z "$MINI_HOST" 4222 >/dev/null 2>&1; then
   mini_nats_status="🟢"
-  nc -G 1 -w 1 -z "$MINI_HOST" 30003 >/dev/null 2>&1 && mini_db_status="🟢"
+  if nc -G 1 -w 1 -z "$MINI_HOST" 30003 >/dev/null 2>&1; then
+    pg_isready -h "$MINI_HOST" -p 30003 -t 1 >/dev/null 2>&1 && mini_db_status="🟢"
+  fi
 elif nc -G 1 -w 1 -z "$MINI_TAILSCALE_IP" 4222 >/dev/null 2>&1; then
   mini_nats_status="🟢"
-  nc -G 1 -w 1 -z "$MINI_TAILSCALE_IP" 30003 >/dev/null 2>&1 && mini_db_status="🟢"
+  if nc -G 1 -w 1 -z "$MINI_TAILSCALE_IP" 30003 >/dev/null 2>&1; then
+    pg_isready -h "$MINI_TAILSCALE_IP" -p 30003 -t 1 >/dev/null 2>&1 && mini_db_status="🟢"
+  fi
 fi
 
 # --- Model color ---
@@ -185,7 +221,7 @@ if [ -f /tmp/.claude_async_task ]; then
   async_indicator=$(printf '%b' " ${DIM}|${RST} 🔄 ${MAGENTA}${async_type}${RST}")
 fi
 
-prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} mini-NATS:${mini_nats_status} mini-DB:${mini_db_status} ${DIM}|${RST} ${model_display} ${CYAN}${current_time}${RST} ${DIM}|${RST} ${fixed_suffix}${task_indicator}${async_indicator}")
+prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} mini-NATS:${mini_nats_status} mini-DB:${mini_db_status}${repo_context}${wrong_turn_indicator} ${DIM}|${RST} ${model_display} ${CYAN}${current_time}${RST} ${DIM}|${RST} ${fixed_suffix}${task_indicator}${async_indicator}")
 
 # --- ROTATING DISPLAYS (with task title featured) ---
 cycle_time=$(( $(date +%s 2>/dev/null || echo 0) / 3 ))
