@@ -172,6 +172,98 @@ else
     model_display=""
 fi
 
+# --- INFRASTRUCTURE HELPERS ---
+# Detect NATS cluster (returns port number)
+detect_nats_cluster() {
+  # Check which NATS port is responding (priority: 4222 prod, 4223 dev, 4224 test)
+  if nc -G 1 -w 1 -z localhost 4222 >/dev/null 2>&1; then
+    echo "4222"
+  elif nc -G 1 -w 1 -z localhost 4223 >/dev/null 2>&1; then
+    echo "4223"
+  elif nc -G 1 -w 1 -z localhost 4224 >/dev/null 2>&1; then
+    echo "4224"
+  else
+    echo "none"
+  fi
+}
+
+# Check Bridge health (can bridge.chat respond?)
+check_bridge_health() {
+  nats_port=$(detect_nats_cluster)
+  if [ "$nats_port" != "none" ]; then
+    # macOS-compatible timeout: use gtimeout if available, else just try nats request (fast on healthy connection)
+    if command -v gtimeout >/dev/null 2>&1; then
+      gtimeout 1 nats request --server "nats://localhost:${nats_port}" "bridge.chat" '{"query":"ping"}' >/dev/null 2>&1 && echo "🟢" || echo "🔴"
+    elif command -v timeout >/dev/null 2>&1; then
+      timeout 1 nats request --server "nats://localhost:${nats_port}" "bridge.chat" '{"query":"ping"}' >/dev/null 2>&1 && echo "🟢" || echo "🔴"
+    else
+      # Fallback: just run nats request (will be fast if bridge is healthy)
+      nats request --server "nats://localhost:${nats_port}" "bridge.chat" '{"query":"ping"}' >/dev/null 2>&1 && echo "🟢" || echo "🔴"
+    fi
+  else
+    echo "⚫"
+  fi
+}
+
+# Check Proof-of-validation status (is .push-validated fresh?)
+check_proof_validation() {
+  if [ -f .push-validated ]; then
+    file_ts=$(stat -f %m .push-validated 2>/dev/null || stat -c %Y .push-validated 2>/dev/null || echo 0)
+    now_ts=$(date +%s)
+    age=$((now_ts - file_ts))
+    if [ "$age" -lt 300 ]; then  # Within 5 minutes
+      echo "✅"
+    else
+      echo "⏱️"  # Stale (older than 5 min)
+    fi
+  else
+    echo "❌"  # Missing
+  fi
+}
+
+# Check Mini connectivity (Tailscale/SSH)
+check_mini_connectivity() {
+  # Try Tailscale IP first, then local
+  if [ -n "$MINI_TAILSCALE_IP" ]; then
+    ssh -o ConnectTimeout=1 -o BatchMode=yes "ergon@${MINI_TAILSCALE_IP}" true >/dev/null 2>&1 && echo "🟢" || echo "🔴"
+  elif nc -G 1 -w 1 -z localhost 2222 >/dev/null 2>&1; then
+    ssh -o ConnectTimeout=1 -o Port=2222 -o BatchMode=yes "ergon@localhost" true >/dev/null 2>&1 && echo "🟢" || echo "🔴"
+  else
+    echo "⚫"  # Not reachable
+  fi
+}
+
+# Check a bot's health via its .health subject
+check_bot_health() {
+  local bot_name=$1
+  local nats_port=$(detect_nats_cluster)
+  if [ "$nats_port" = "none" ]; then
+    echo "⚫"
+    return
+  fi
+  if nats request --server "nats://localhost:${nats_port}" "bot.${bot_name}.health" '{}' --timeout 1s >/dev/null 2>&1; then
+    echo "🟢"
+  else
+    echo "🔴"
+  fi
+}
+
+# Check for pending deployments (unreleased commits since last deploy snapshot)
+check_pending_deployment() {
+  if [ -f config/ecosystem_versions.toml ]; then
+    # Simple check: if git has commits since last ecosystem snapshot commit
+    last_snapshot_commit=$(grep -m1 "^# Last working commit:" config/ecosystem_versions.toml 2>/dev/null | awk '{print $NF}' || echo "")
+    current_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$last_snapshot_commit" ] && [ -n "$current_commit" ] && [ "$last_snapshot_commit" != "$current_commit" ]; then
+      echo "📦"  # Pending
+    else
+      echo "✓"  # Up to date
+    fi
+  else
+    echo "?"
+  fi
+}
+
 # --- FIXED PREFIX (always visible) ---
 cost_display=$(printf "%.4f" "$cost" 2>/dev/null || echo "$cost")
 
@@ -221,11 +313,13 @@ if [ -f /tmp/.claude_async_task ]; then
   async_indicator=$(printf '%b' " ${DIM}|${RST} 🔄 ${MAGENTA}${async_type}${RST}")
 fi
 
-prefix=$(printf '%b' "NATS:${nats_status} DB:${db_status} mini-NATS:${mini_nats_status} mini-DB:${mini_db_status}${repo_context}${wrong_turn_indicator} ${DIM}|${RST} ${model_display} ${CYAN}${current_time}${RST} ${DIM}|${RST} ${fixed_suffix}${task_indicator}${async_indicator}")
+prefix=$(printf '%b' "${repo_context}${wrong_turn_indicator} ${DIM}|${RST} ${model_display} ${CYAN}${current_time}${RST} ${DIM}|${RST} ${task_indicator}${async_indicator}")
 
 # --- ROTATING DISPLAYS (with task title featured) ---
+# Compute both rotating displays independently
 cycle_time=$(( $(date +%s 2>/dev/null || echo 0) / 3 ))
-display=$(( cycle_time % 7 ))
+display=$(( cycle_time % 8 ))        # Workspace display (8 panels)
+display_infra=$(( (cycle_time + 1) % 13 ))  # Infrastructure display (13 panels, offset by 1)
 
 case $display in
   0)
@@ -252,7 +346,7 @@ case $display in
       ctx_part="context: loading"
     fi
     tok_part=$(printf '%b' "${BOLD_CYAN}in:${total_in}${RST} ${MAGENTA}out:${total_out}${RST} ${GREEN}+${lines_added}${RST}/${RED}-${lines_removed}${RST}")
-    rotating=$(printf '%b' "${ctx_part} ${DIM}|${RST} ${tok_part}")
+    rotating=$(printf '%b' "${ctx_part} ${DIM}|${RST} ${tok_part} ${DIM}|${RST} ${fixed_suffix}")
     ;;
   2)
     # Display 2: Tasks + Projects (combined line)
@@ -403,10 +497,101 @@ case $display in
 
     rotating=$(printf '%b' "${cpu_color}🔥 CPU:${cpu_used:-?}%${RST} ${DIM}|${RST} ${mem_color}🧠 MEM:${mem_used_pct:-?}%${RST} ${DIM}|${RST} ${CYAN}⚖️  LD:${load_avg:-?}${RST}")
     ;;
+  7)
+    # Display 7: Infrastructure Health Lights
+    rotating=$(printf '%b' "🔌 NATS:${nats_status} DB:${db_status} mini-NATS:${mini_nats_status} mini-DB:${mini_db_status}")
+    ;;
 esac
 
-# --- OUTPUT: Fixed header on line 1, rotating marquee on line 2 ---
+# --- INFRASTRUCTURE ROTATING DISPLAY (Line 3) ---
+case $display_infra in
+  0)
+    # Display 0: NATS Cluster Status
+    nats_cluster=$(detect_nats_cluster)
+    cluster_name=""
+    case "$nats_cluster" in
+      4222) cluster_name="Production" ;;
+      4223) cluster_name="Development" ;;
+      4224) cluster_name="Testing" ;;
+      *) cluster_name="Offline" ;;
+    esac
+    rotating_infra=$(printf '%b' "${BOLD_BLUE}🔗 NATS:${nats_cluster}${RST} ${DIM}(${cluster_name})${RST}")
+    ;;
+  1)
+    # Display 1: Bridge Health
+    bridge_status=$(check_bridge_health)
+    rotating_infra=$(printf '%b' "🌉 Bridge: ${bridge_status}")
+    ;;
+  2)
+    # Display 2: LLM Bot Health
+    llm_status=$(check_bot_health "llm")
+    rotating_infra=$(printf '%b' "🤖 LLM: ${llm_status}")
+    ;;
+  3)
+    # Display 3: GTD Bot Health
+    gtd_status=$(check_bot_health "gtd")
+    rotating_infra=$(printf '%b' "🤖 GTD: ${gtd_status}")
+    ;;
+  4)
+    # Display 4: Synapse Bot Health
+    synapse_status=$(check_bot_health "synapse")
+    rotating_infra=$(printf '%b' "🤖 Synapse: ${synapse_status}")
+    ;;
+  5)
+    # Display 5: PARA Bot Health
+    para_status=$(check_bot_health "para")
+    rotating_infra=$(printf '%b' "🤖 PARA: ${para_status}")
+    ;;
+  6)
+    # Display 6: Graphify Cache Health
+    gc_status=$(check_bot_health "graphify_cache")
+    rotating_infra=$(printf '%b' "🤖 Graphify: ${gc_status}")
+    ;;
+  7)
+    # Display 7: Job Scheduler Health
+    js_status=$(check_bot_health "job_scheduler")
+    rotating_infra=$(printf '%b' "🤖 Sched: ${js_status}")
+    ;;
+  8)
+    # Display 8: Companion Health
+    comp_status=$(check_bot_health "companion")
+    rotating_infra=$(printf '%b' "🤖 Comp: ${comp_status}")
+    ;;
+  9)
+    # Display 9: Proof-of-Validation Status
+    proof_status=$(check_proof_validation)
+    rotating_infra=$(printf '%b' "✔️  Push-Validated: ${proof_status}")
+    ;;
+  10)
+    # Display 10: Mini Connectivity
+    mini_status=$(check_mini_connectivity)
+    rotating_infra=$(printf '%b' "🖥️  Mini: ${mini_status}")
+    ;;
+  11)
+    # Display 11: Pending Deployment
+    deployment_status=$(check_pending_deployment)
+    rotating_infra=$(printf '%b' "📤 Deploy: ${deployment_status}")
+    ;;
+  12)
+    # Display 12: Critical Bot Summary
+    b_stat=$(check_bridge_health)
+    l_stat=$(check_bot_health "llm")
+    g_stat=$(check_bot_health "gtd")
+    s_stat=$(check_bot_health "synapse")
+    p_stat=$(check_bot_health "para")
+    gc_stat=$(check_bot_health "graphify_cache")
+    js_stat=$(check_bot_health "job_scheduler")
+    c_stat=$(check_bot_health "companion")
+    rotating_infra=$(printf '%b' "🤖 B:${b_stat} L:${l_stat} G:${g_stat} S:${s_stat} P:${p_stat} GC:${gc_stat} JS:${js_stat} C:${c_stat}")
+    ;;
+  *)
+    rotating_infra=$(printf '%b' "?")
+    ;;
+esac
+
+# --- OUTPUT: Fixed header on line 1, two rotating displays on lines 2-3 ---
 printf '%b\n' "$prefix"
 printf '  %s\n' "$rotating"
+printf '  %s\n' "$rotating_infra"
 
 } 2>/dev/null || printf "status ready\n"
